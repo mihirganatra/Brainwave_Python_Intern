@@ -1,0 +1,372 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import hashlib
+from datetime import datetime
+
+USERS = {
+    'admin': hashlib.sha256('password'.encode()).hexdigest()
+}
+
+inventory = {}
+sales = []
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def validate_product_data(name, quantity, price):
+    if not name.strip():
+        messagebox.showerror("Validation Error", "Product name cannot be empty.")
+        return False
+    try:
+        q = int(quantity)
+        if q < 0:
+            messagebox.showerror("Validation Error", "Quantity must be zero or greater.")
+            return False
+    except ValueError:
+        messagebox.showerror("Validation Error", "Quantity must be an integer.")
+        return False
+    try:
+        p = float(price)
+        if p < 0:
+            messagebox.showerror("Validation Error", "Price must be zero or greater.")
+            return False
+    except ValueError:
+        messagebox.showerror("Validation Error", "Price must be a number.")
+        return False
+    return True
+
+class InventoryApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Inventory Management System")
+        self.geometry("900x600")
+        self.resizable(False, False)
+        self.style = ttk.Style(self)
+        self.style.theme_use('clam')
+        self.login_screen()
+
+    def clear_widgets(self):
+        for w in self.winfo_children():
+            w.destroy()
+
+    def login_screen(self):
+        self.clear_widgets()
+        frame = ttk.Frame(self, padding=30)
+        frame.place(relx=0.5, rely=0.5, anchor="center")
+
+        ttk.Label(frame, text="Inventory Management System", font=("Helvetica", 18, "bold")).grid(row=0,column=0,columnspan=2, pady=(0,20))
+        ttk.Label(frame, text="Username:").grid(row=1,column=0, sticky="e", padx=5, pady=5)
+        self.username_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.username_var).grid(row=1,column=1, pady=5)
+
+        ttk.Label(frame, text="Password:").grid(row=2,column=0, sticky="e", padx=5, pady=5)
+        self.password_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.password_var, show="*").grid(row=2,column=1, pady=5)
+
+        ttk.Button(frame, text="Login", command=self.handle_login).grid(row=3,column=0,columnspan=2, pady=15)
+
+    def handle_login(self):
+        user = self.username_var.get().strip()
+        pwd = self.password_var.get().strip()
+        if USERS.get(user) == hash_password(pwd):
+            self.current_user = user
+            self.main_screen()
+        else:
+            messagebox.showerror("Login Failed", "Invalid username or password.")
+
+    def main_screen(self):
+        self.clear_widgets()
+
+        top_frame = ttk.Frame(self, padding=10)
+        top_frame.pack(fill="x")
+        ttk.Label(top_frame, text=f"Welcome, {self.current_user}", font=("Helvetica", 16, "bold")).pack(side="left")
+        ttk.Button(top_frame, text="Logout", command=self.login_screen).pack(side="right")
+
+        btn_frame = ttk.Frame(self, padding=10)
+        btn_frame.pack(fill="x")
+        ttk.Button(btn_frame, text="Add Product", command=self.add_product_dialog).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Edit Selected", command=self.edit_selected_product).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Delete Selected", command=self.delete_selected_product).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Record Sale", command=self.record_sale_dialog).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="View Sales Records", command=self.view_sales_records).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Reports", command=self.reports_screen).pack(side="left", padx=20)
+
+        cols = ("Name", "Quantity", "Price")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="browse")
+        for c in cols:
+            self.tree.heading(c, text=c)
+            self.tree.column(c, anchor="center", width=200)
+        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.refresh_inventory_view()
+
+    def refresh_inventory_view(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        for name, data in inventory.items():
+            self.tree.insert("", "end", iid=name, values=(name, data["quantity"], f"${data['price']:.2f}"))
+
+    def add_product_dialog(self):
+        dialog = ProductDialog(self, "Add Product")
+        self.wait_window(dialog)  # Only wait here, not inside dialog class!
+        if dialog.result:
+            name, quantity, price = dialog.result
+            if name in inventory:
+                messagebox.showerror("Add Product", f"Product '{name}' already exists.")
+                return
+            inventory[name] = {"quantity": int(quantity), "price": float(price)}
+            self.refresh_inventory_view()
+
+    def edit_selected_product(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Edit Product", "Select a product first.")
+            return
+        name = sel[0]
+        data = inventory[name]
+        dialog = ProductDialog(self, "Edit Product", initial=(name, data["quantity"], data["price"]), edit_name=True)
+        self.wait_window(dialog)
+        if dialog.result:
+            new_name, quantity, price = dialog.result
+            if new_name != name and new_name in inventory:
+                messagebox.showerror("Edit Product", f"Product '{new_name}' already exists.")
+                return
+            if new_name != name:
+                del inventory[name]
+            inventory[new_name] = {"quantity": int(quantity), "price": float(price)}
+            self.refresh_inventory_view()
+
+    def delete_selected_product(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Delete Product", "Select a product first.")
+            return
+        name = sel[0]
+        if messagebox.askyesno("Delete Product", f"Delete product '{name}'?"):
+            del inventory[name]
+            self.refresh_inventory_view()
+
+    def record_sale_dialog(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Record Sale", "Select a product first.")
+            return
+        name = sel[0]
+        max_qty = inventory[name]["quantity"]
+        if max_qty == 0:
+            messagebox.showinfo("Record Sale", f"No inventory left for '{name}'.")
+            return
+        dialog = SaleDialog(self, name, max_qty)
+        self.wait_window(dialog)
+        if dialog.result:
+            qty = dialog.result
+            inventory[name]["quantity"] -= qty
+            sales.append({
+                "id": len(sales)+1,
+                "name": name,
+                "quantity": qty,
+                "price": inventory[name]["price"],
+                "total": inventory[name]["price"]*qty,
+                "date": datetime.now()
+            })
+            self.refresh_inventory_view()
+            messagebox.showinfo("Sale Recorded", f"Recorded sale of {qty} unit(s) for '{name}'.")
+
+    def view_sales_records(self):
+        if not sales:
+            messagebox.showinfo("Sales Records", "No sales to show.")
+            return
+        dialog = SalesRecordsDialog(self)
+        self.wait_window(dialog)
+
+    def reports_screen(self):
+        self.clear_widgets()
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Reports", font=("Helvetica", 18, "bold")).pack(pady=10)
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=5)
+        ttk.Button(btn_frame, text="Back to Main", command=self.main_screen).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Low Stock Alert", command=self.low_stock_report).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Sales Summary", command=self.sales_summary_report).pack(side="left", padx=5)
+        self.report_text = tk.Text(frame, height=25, state="disabled", bg="#f9f9f9", wrap="word")
+        self.report_text.pack(fill="both", expand=True, pady=10)
+
+    def low_stock_report(self):
+        threshold = 5
+        low_stock = [(n, d["quantity"]) for n, d in inventory.items() if d["quantity"] <= threshold]
+        text = f"Low Stock Alert (Threshold: {threshold} units)\n\n"
+        if low_stock:
+            text += "\n".join([f"{n}: {q} unit(s) left" for n, q in low_stock])
+        else:
+            text += "All products in sufficient stock."
+        self._update_report(text)
+
+    def sales_summary_report(self):
+        if not sales:
+            self._update_report("No sales data available.")
+            return
+        total_revenue = sum(s["total"] for s in sales)
+        total_qty = sum(s["quantity"] for s in sales)
+        by_product = {}
+        for s in sales:
+            by_product[s["name"]] = by_product.get(s["name"], 0) + s["quantity"]
+        lines = [
+            "Sales Summary Report",
+            "---------------------",
+            f"Total Revenue: ${total_revenue:.2f}",
+            f"Total Items Sold: {total_qty}",
+            "",
+            "Sales by Product:"
+        ]
+        for k,v in by_product.items():
+            lines.append(f" - {k}: {v} unit(s)")
+        self._update_report("\n".join(lines))
+
+    def _update_report(self, text):
+        self.report_text.config(state="normal")
+        self.report_text.delete(1.0, "end")
+        self.report_text.insert("end", text)
+        self.report_text.config(state="disabled")
+
+class ProductDialog(tk.Toplevel):
+    def __init__(self, parent, title, initial=None, edit_name=False):
+        super().__init__(parent)
+        self.title(title)
+        self.resizable(False, False)
+        self.result = None
+        self.transient(parent)
+        self.grab_set()
+
+        ttk.Label(self, text="Product Name:").grid(row=0,column=0,padx=10,pady=10,sticky="e")
+        self.name_var = tk.StringVar()
+        self.name_entry = ttk.Entry(self, textvariable=self.name_var)
+        self.name_entry.grid(row=0,column=1,padx=10,pady=10)
+
+        ttk.Label(self, text="Quantity:").grid(row=1,column=0,padx=10,pady=10,sticky="e")
+        self.quantity_var = tk.StringVar()
+        ttk.Entry(self, textvariable=self.quantity_var).grid(row=1,column=1,padx=10,pady=10)
+
+        ttk.Label(self, text="Price (per unit):").grid(row=2,column=0,padx=10,pady=10,sticky="e")
+        self.price_var = tk.StringVar()
+        ttk.Entry(self, textvariable=self.price_var).grid(row=2,column=1,padx=10,pady=10)
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.grid(row=3,column=0,columnspan=2,pady=15)
+        ttk.Button(btn_frame, text="Cancel", command=self.on_cancel).pack(side="right", padx=5)
+        ttk.Button(btn_frame, text="OK", command=self.on_ok).pack(side="right")
+
+        if initial is not None:
+            self.name_var.set(initial[0])
+            self.quantity_var.set(str(initial[1]))
+            self.price_var.set(f"{float(initial[2]):.2f}")
+            if not edit_name:
+                self.name_entry.config(state="disabled")
+
+        self.protocol("WM_DELETE_WINDOW", self.on_cancel)
+        self.name_entry.focus_set()
+        # self.wait_window(self)  # <--- REMOVE this line!
+
+    def on_ok(self):
+        name = self.name_var.get().strip()
+        quantity = self.quantity_var.get().strip()
+        price = self.price_var.get().strip()
+        if validate_product_data(name, quantity, price):
+            self.result = (name, quantity, price)
+            self.destroy()
+
+    def on_cancel(self):
+        self.result = None
+        self.destroy()
+
+class SaleDialog(tk.Toplevel):
+    def __init__(self, parent, product_name, max_qty):
+        super().__init__(parent)
+        self.title(f"Record Sale - {product_name}")
+        self.resizable(False, False)
+        self.result = None
+        self.transient(parent)
+        self.grab_set()
+
+        ttk.Label(self, text=f"Product: {product_name}").grid(row=0, column=0, columnspan=2, padx=10, pady=10)
+        ttk.Label(self, text=f"Max quantity available: {max_qty}").grid(row=1, column=0, columnspan=2, padx=10, pady=5)
+        ttk.Label(self, text="Quantity sold:").grid(row=2, column=0, padx=10, pady=10, sticky="e")
+        self.qty_var = tk.StringVar()
+        ttk.Entry(self, textvariable=self.qty_var).grid(row=2, column=1, padx=10, pady=10)
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=15)
+        ttk.Button(btn_frame, text="Cancel", command=self.on_cancel).pack(side="right", padx=5)
+        ttk.Button(btn_frame, text="OK", command=lambda: self.on_ok(max_qty)).pack(side="right")
+
+        self.protocol("WM_DELETE_WINDOW", self.on_cancel)
+        # self.wait_window(self)  # <--- REMOVE this line!
+
+    def on_ok(self, max_qty):
+        try:
+            qty = int(self.qty_var.get())
+            if qty <= 0 or qty > max_qty:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Input Error", f"Enter integer quantity between 1 and {max_qty}.")
+            return
+        self.result = qty
+        self.destroy()
+
+    def on_cancel(self):
+        self.result = None
+        self.destroy()
+
+class SalesRecordsDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Sales Records")
+        self.geometry("700x400")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        ttk.Label(self, text="Sales Records", font=("Helvetica", 16, "bold")).pack(pady=10)
+        cols = ("ID", "Product", "Quantity", "Price", "Total", "Date")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="browse")
+        for c in cols:
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=100, anchor="center")
+        self.tree.column("Date", width=150)
+        self.tree.pack(fill="both", expand=True, padx=10)
+
+        self.populate_sales()
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Delete Selected Sale", command=self.delete_selected_sale).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side="left", padx=5)
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        # self.wait_window(self)  # <--- REMOVE this line!
+
+    def populate_sales(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        for s in sales:
+            date_str = s["date"].strftime("%Y-%m-%d %H:%M:%S")
+            self.tree.insert("", "end", iid=str(s["id"]), values=(
+                s["id"], s["name"], s["quantity"], f"${s['price']:.2f}", f"${s['total']:.2f}", date_str))
+
+    def delete_selected_sale(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Delete Sale", "Select a sale record first.")
+            return
+        sale_id = int(sel[0])
+        if messagebox.askyesno("Delete Sale", f"Delete sale record ID {sale_id}? Inventory won't be restored."):
+            global sales
+            sales = [s for s in sales if s["id"] != sale_id]
+            self.populate_sales()
+            messagebox.showinfo("Delete Sale", f"Deleted sale record ID {sale_id}.")
+
+if __name__ == "__main__":
+    app = InventoryApp()
+    app.mainloop()
+
+
